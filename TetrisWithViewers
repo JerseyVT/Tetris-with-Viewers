@@ -1,0 +1,333 @@
+import pygame
+import random
+import sys
+import twitchio
+from twitchio.ext import commands
+import threading
+
+# Initialize Pygame
+pygame.init()
+
+# Define constants
+SCREEN_WIDTH = 300
+SCREEN_HEIGHT = 600
+BLOCK_SIZE = 30
+COLUMN_COUNT = 10
+ROW_COUNT = 20
+BLUE = (11, 38, 131)
+YELLOW = (222, 222, 206)
+RED = (191, 31, 59)
+GREEN = (75, 144, 57)
+MAGENTA = (106, 26, 96)
+ORANGE = (194, 107, 29)
+PINK = (228, 146, 221)
+BLACK= (0,0,0)
+WHITE = (255,255,255)
+
+# Define shapes of the Tetriminos
+SHAPES = [
+    [[1, 1, 1, 1]],  # I shape
+    [[1, 1], [1, 1]],  # O shape
+    [[1, 1, 0], [0, 1, 1]],  # S shape
+    [[0, 1, 1], [1, 1, 0]],  # Z shape
+    [[1, 1, 1], [0, 1, 0]],  # T shape
+    [[1, 1, 1], [1, 0, 0]],  # L shape
+    [[1, 1, 1], [0, 0, 1]],  # J shape
+]
+
+# Define colors for the Tetriminos
+SHAPE_COLORS = {
+    "I": BLUE,        # I shape is blue
+    "O": YELLOW,      # O shape is yellow
+    "S": RED,         # S shape is red
+    "Z": GREEN, # Z shape is dark green
+    "T": MAGENTA,      # T shape is purple
+    "L": ORANGE,      # L shape is orange
+    "J": PINK,        # J shape is pink
+}
+
+# Initialize the screen
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Tetris")
+
+# Load sound effects
+pygame.mixer.init()
+line_clear_sound = pygame.mixer.Sound('Tetris (GB) (21)-line_clear.wav')
+rotate_sound = pygame.mixer.Sound('Tetris (GB) (19)-rotate_piece.wav')
+move_sound = pygame.mixer.Sound('Tetris (GB) (18)-move_piece.wav')
+level_up_sound = pygame.mixer.Sound('Tetris (GB) (23)-level_up_jingle (V1.1).wav')
+game_over_sound = pygame.mixer.Sound('Tetris (GB) (25)-game_over.wav')
+
+
+class TetrisGame:
+    def __init__(self):
+        self.board = [[None for _ in range(COLUMN_COUNT)] for _ in range(ROW_COUNT)]
+        self.tetrimino = self.new_tetrimino()
+        self.score = 0
+        self.lines_cleared = 0
+        self.level = 1
+        self.game_speed = 1  # Initial game speed
+        self.game_over = False
+
+    def new_tetrimino(self):
+        shape = random.choice(SHAPES)
+        
+        # Determine the shape name and assign corresponding color
+        shape_name = SHAPES.index(shape)
+        color = None
+        if shape == SHAPES[0]:
+            color = SHAPE_COLORS["I"]
+        elif shape == SHAPES[1]:
+            color = SHAPE_COLORS["O"]
+        elif shape == SHAPES[2]:
+            color = SHAPE_COLORS["S"]
+        elif shape == SHAPES[3]:
+            color = SHAPE_COLORS["Z"]
+        elif shape == SHAPES[4]:
+            color = SHAPE_COLORS["T"]
+        elif shape == SHAPES[5]:
+            color = SHAPE_COLORS["L"]
+        elif shape == SHAPES[6]:
+            color = SHAPE_COLORS["J"]
+        
+        tetrimino = Tetrimino(shape, color)
+        
+        # Check if the new Tetrimino can fit at the top of the board
+        if not self.is_valid_move(tetrimino):
+            self.game_over = True  # If the tetrimino cannot fit, set game over
+            return None  # Return None to indicate the game is over
+        
+        return tetrimino
+
+    
+    def check_game_over(self):
+        for x in range(COLUMN_COUNT):
+            if self.board[0][x] is not None:  # Check if the top row is full
+                self.game_over = True
+                break
+
+    def rotate_tetrimino(self):
+        self.tetrimino.rotate()
+        if not self.is_valid_move(self.tetrimino):
+            self.tetrimino.rotate()
+            self.tetrimino.rotate()
+            self.tetrimino.rotate()
+        else:
+            rotate_sound.play()  # Play the rotate sound
+
+    def is_valid_move(self, tetrimino):
+        for x, y in tetrimino.get_blocks():
+            if x < 0 or x >= COLUMN_COUNT or y >= ROW_COUNT or (y >= 0 and self.board[y][x]):
+                return False
+        return True
+
+    def place_tetrimino(self):
+        for x, y in self.tetrimino.get_blocks():
+            if y >= 0:
+                self.board[y][x] = self.tetrimino.color
+
+    def clear_lines(self):
+        new_board = [row for row in self.board if any(cell is None for cell in row)]
+        cleared_lines = ROW_COUNT - len(new_board)
+        if cleared_lines > 0:
+            self.lines_cleared += cleared_lines
+            self.score += cleared_lines * 100  # Score 100 points for each cleared line
+            line_clear_sound.play()  # Play the line clear sound
+            if self.lines_cleared >= 10:  # Advance level after clearing 10 lines
+                self.lines_cleared -= 10
+                self.level_up()
+
+        new_board = [[None] * COLUMN_COUNT] * (ROW_COUNT - len(new_board)) + new_board
+        self.board = new_board
+
+    def level_up(self):
+        self.level += 1
+        if self.level > 29:
+            self.level = 29  # Kill screen at level 29
+        self.game_speed = max(20, 1+ self.level)  # Increase speed as level increases
+        level_up_sound.play()  # Play the level up sound
+
+    def move_tetrimino_left(self):
+        self.tetrimino.x -= 1
+        if not self.is_valid_move(self.tetrimino):
+            self.tetrimino.x += 1
+        else:
+            move_sound.play()  # Play the move sound
+
+    def move_tetrimino_right(self):
+        self.tetrimino.x += 1
+        if not self.is_valid_move(self.tetrimino):
+            self.tetrimino.x -= 1
+        else:
+            move_sound.play()  # Play the move sound
+
+    def move_tetrimino_down(self):
+        if self.game_over:
+            return  # If the game is over, do nothing
+
+        self.tetrimino.y += 1
+        if not self.is_valid_move(self.tetrimino):
+            self.tetrimino.y -= 1
+            self.place_tetrimino()
+            self.clear_lines()
+
+            # Check if the game is over after placing the Tetrimino
+            self.check_game_over()
+
+            if self.game_over:
+                return  # Exit if the game is over
+
+            self.tetrimino = self.new_tetrimino()
+        else:
+            move_sound.play()  # Play the move sound
+
+class Tetrimino:
+    def __init__(self, shape, color):
+        self.shape = shape
+        self.color = color
+        self.x = COLUMN_COUNT // 2 - len(shape[0]) // 2
+        self.y = 0
+
+    def rotate(self):
+        self.shape = [list(row) for row in zip(*self.shape[::-1])]
+
+    def get_blocks(self):
+        return [(self.x + i, self.y + j)
+                for j, row in enumerate(self.shape)
+                for i, cell in enumerate(row) if cell]
+
+
+# Function to draw the game
+def draw_game(game):
+    screen.fill(BLACK)
+
+    # Draw the grid
+    for y in range(ROW_COUNT):
+        for x in range(COLUMN_COUNT):
+            pygame.draw.rect(screen, WHITE, pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), 1)
+
+    # Draw the tetriminoes
+    for y in range(ROW_COUNT):
+        for x in range(COLUMN_COUNT):
+            if game.board[y][x]:
+                pygame.draw.rect(screen, game.board[y][x], pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+    for x, y in game.tetrimino.get_blocks():
+        if y >= 0:
+            pygame.draw.rect(screen, game.tetrimino.color, pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+    # Draw the score and level
+    draw_score(game.score)
+    draw_level(game.level)
+
+    pygame.display.flip()
+
+def draw_score(score):
+    font = pygame.font.Font(None, 36)
+    score_text = font.render(f"Score: {score}", True, WHITE)
+    screen.blit(score_text, (10, 10))
+
+def draw_level(level):
+    font = pygame.font.Font(None, 36)
+    level_text = font.render(f"Level: {level}", True, WHITE)
+    screen.blit(level_text, (SCREEN_WIDTH - level_text.get_width() - 10, 10))
+
+def draw_game_over(game):
+    font = pygame.font.Font(None, 48)
+    game_over_text = font.render("You Lost", True, RED)
+    screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, SCREEN_HEIGHT // 2 - 100))
+
+    score_text = font.render(f"Score: {game.score}", True, WHITE)
+    screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, SCREEN_HEIGHT // 2))
+
+
+# Update the game loop to wait for the "start" command
+def game_loop(game):
+    global game_started
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        if game_started and not game.game_over:  # Only run the game if it has started and isn't over
+            game.move_tetrimino_down()
+
+        # Draw the game screen
+        draw_game(game)
+        
+        # If game is over, show the game over screen
+        if game.game_over:
+            draw_game_over(game)
+
+        clock.tick(game.game_speed)
+
+# Twitch bot code can grab token, client ID and from here: https://twitchtokengenerator.com/
+bot = commands.Bot(
+    token='',  # Replace with your OAuth token ->https://twitchtokengenerator.com/
+    client_id='',    # Replace with your Twitch client ID -> https://twitchtokengenerator.com/
+    nick='',          # Replace with your Twitch username -> your twitch username
+    prefix='!',                           # Prefix for commands -> Can change, what goes infront of the command so like !right or !left or ?left ;left etc
+    initial_channels=['']  # Replace with your channel name -> twitch channel name, lowercase all
+)
+
+# Add a global variable to track if the game has started
+game_started = False
+
+# Update the start command
+@bot.command()
+async def start(ctx):
+    global game_started
+    if not game_started:
+        game_started = True  # Set the flag to start the game
+        if game.game_over:  # Reset the game state if it was over
+            game.game_over = False
+            game.score = 0
+            game.board = [[None for _ in range(COLUMN_COUNT)] for _ in range(ROW_COUNT)]
+            game.tetrimino = game.new_tetrimino()
+        await ctx.send("The game has started! Use commands to play!")
+
+@bot.command()
+async def left(ctx):
+    if not game.game_over:
+        game.move_tetrimino_left()
+
+@bot.command()
+async def right(ctx):
+    if not game.game_over:
+        game.move_tetrimino_right()
+
+@bot.command()
+async def rotate(ctx):
+    if not game.game_over:
+        game.rotate_tetrimino()
+
+@bot.command()
+async def tryagain(ctx):
+    if game.game_over:
+        game.game_over = False
+        game.score = 0
+        game.board = [[None for _ in range(COLUMN_COUNT)] for _ in range(ROW_COUNT)]
+        game.tetrimino = game.new_tetrimino()
+
+
+# Start Twitch bot in a separate thread
+def start_bot():
+    bot.run()
+
+
+# Start the game and bot
+def main():
+    global game
+    game = TetrisGame()
+
+    # Run Twitch bot in a separate thread
+    threading.Thread(target=start_bot, daemon=True).start()
+
+    # Run the game loop
+    game_loop(game)
+
+
+if __name__ == "__main__":
+    main()
