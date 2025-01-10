@@ -4,6 +4,8 @@ import sys
 import twitchio
 from twitchio.ext import commands
 import threading
+import time
+import re
 
 # Initialize Pygame
 pygame.init()
@@ -23,7 +25,7 @@ ORANGE = (194, 107, 29)
 PINK = (228, 146, 221)
 BLACK= (0,0,0)
 WHITE = (255,255,255)
-
+DARKORANGE=(0, 255, 0)
 # Define shapes of the Tetriminos
 SHAPES = [
     [[1, 1, 1, 1]],  # I shape
@@ -66,7 +68,7 @@ class TetrisGame:
         self.score = 0
         self.lines_cleared = 0
         self.level = 1
-        self.game_speed = 1  # Initial game speed
+        self.game_speed = 1  # Initial game speed; make 0.25 when playing with twitch chat
         self.game_over = False
 
     def new_tetrimino(self):
@@ -144,7 +146,7 @@ class TetrisGame:
         self.level += 1
         if self.level > 29:
             self.level = 29  # Kill screen at level 29
-        self.game_speed = max(20, 1+ self.level)  # Increase speed as level increases
+        self.game_speed = max(20, self.game_speed+ 0.25)  # Increase speed as level increases
         level_up_sound.play()  # Play the level up sound
 
     def move_tetrimino_left(self):
@@ -206,15 +208,21 @@ def draw_game(game):
         for x in range(COLUMN_COUNT):
             pygame.draw.rect(screen, WHITE, pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), 1)
 
-    # Draw the tetriminoes
+    # Draw the tetriminoes that are on the board
     for y in range(ROW_COUNT):
         for x in range(COLUMN_COUNT):
             if game.board[y][x]:
                 pygame.draw.rect(screen, game.board[y][x], pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
 
-    for x, y in game.tetrimino.get_blocks():
-        if y >= 0:
-            pygame.draw.rect(screen, game.tetrimino.color, pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+    # Draw the current tetrimino if it's not None
+    if game.tetrimino is not None:
+        for x, y in game.tetrimino.get_blocks():
+            if y >= 0:
+                # Draw black outline first
+                pygame.draw.rect(screen, (0, 0, 0), pygame.Rect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+                # Then draw the shape in its color (slightly offset for the outline to show)
+                pygame.draw.rect(screen, game.tetrimino.color, pygame.Rect(x * BLOCK_SIZE + 1, y * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2))
 
     # Draw the score and level
     draw_score(game.score)
@@ -224,13 +232,35 @@ def draw_game(game):
 
 def draw_score(score):
     font = pygame.font.Font(None, 36)
-    score_text = font.render(f"Score: {score}", True, WHITE)
+    score_text = font.render(f"Score: {score}", True, DARKORANGE)
+    outline_color = BLACK  # Gray outline
+
+    # Draw the outline by rendering the text multiple times with slight offsets
+    outline_offset = 2  # Offset to create the outline effect
+    for dx in [-outline_offset, 0, outline_offset]:
+        for dy in [-outline_offset, 0, outline_offset]:
+            if dx != 0 or dy != 0:  # Skip the center position
+                screen.blit(font.render(f"Score: {score}", True, outline_color), (10 + dx, 10 + dy))
+
+    # Draw the main score text (orange) on top of the outline
     screen.blit(score_text, (10, 10))
 
 def draw_level(level):
     font = pygame.font.Font(None, 36)
-    level_text = font.render(f"Level: {level}", True, WHITE)
+    level_text = font.render(f"Level: {level}", True, DARKORANGE)
+    outline_color = BLACK  # Gray outline
+
+    # Draw the outline by rendering the text multiple times with slight offsets
+    outline_offset = 2  # Offset to create the outline effect
+    for dx in [-outline_offset, 0, outline_offset]:
+        for dy in [-outline_offset, 0, outline_offset]:
+            if dx != 0 or dy != 0:  # Skip the center position
+                screen.blit(font.render(f"Level: {level}", True, outline_color), (SCREEN_WIDTH - level_text.get_width() - 10 + dx, 10 + dy))
+
+    # Draw the main level text (orange) on top of the outline
     screen.blit(level_text, (SCREEN_WIDTH - level_text.get_width() - 10, 10))
+
+
 
 def draw_game_over(game):
     font = pygame.font.Font(None, 48)
@@ -241,9 +271,12 @@ def draw_game_over(game):
     screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, SCREEN_HEIGHT // 2))
 
 
-# Update the game loop to wait for the "start" command
+# Add a global variable to track if it's the first run
+first_run = True
+
+# Update the game loop to restart automatically after the first game over
 def game_loop(game):
-    global game_started
+    global game_started, first_run
     clock = pygame.time.Clock()
     while True:
         for event in pygame.event.get():
@@ -251,34 +284,50 @@ def game_loop(game):
                 pygame.quit()
                 sys.exit()
 
-        if game_started and not game.game_over:  # Only run the game if it has started and isn't over
+        if not first_run and not game.game_over:  # Only run the game if it has started and isn't over
             game.move_tetrimino_down()
 
         # Draw the game screen
         draw_game(game)
         
-        # If game is over, show the game over screen
+        # If game is over, show the game over screen and restart after a delay
         if game.game_over:
             draw_game_over(game)
+            time.sleep(2)  # Wait for 2 seconds before restarting
+            game.game_over = False
+            game.score = 0
+            game.level = 1
+            game.game_speed = 0.25
+            game.board = [[None for _ in range(COLUMN_COUNT)] for _ in range(ROW_COUNT)]
+            game.tetrimino = game.new_tetrimino()
+
+            if first_run:  # After the first game over, auto start the game again
+                first_run = False
+                game_started = True #automatically start the game again
+            else:
+                game_started = False  # Reset the game start flag after auto restart
 
         clock.tick(game.game_speed)
 
 # Twitch bot code can grab token, client ID and from here: https://twitchtokengenerator.com/
 bot = commands.Bot(
-    token='',  # Replace with your OAuth token ->https://twitchtokengenerator.com/
-    client_id='',    # Replace with your Twitch client ID -> https://twitchtokengenerator.com/
-    nick='',          # Replace with your Twitch username -> your twitch username
-    prefix='!',                           # Prefix for commands -> Can change, what goes infront of the command so like !right or !left or ?left ;left etc
-    initial_channels=['']  # Replace with your channel name -> twitch channel name, lowercase all
+    token='',  # Replace with your OAuth token
+    client_id='',    # Replace with your Twitch client ID
+    nick='',          # Replace with your Twitch username
+    prefix='!',                           # Prefix for commands
+    initial_channels=['']  # Replace with your channel name
 )
+# Function to start the game in a separate thread
+def start_game_thread():
+    game_loop(game)
 
 # Add a global variable to track if the game has started
 game_started = False
 
-# Update the start command
+# Update the start command to trigger only the first time
 @bot.command()
 async def start(ctx):
-    global game_started
+    global game_started, first_run
     if not game_started:
         game_started = True  # Set the flag to start the game
         if game.game_over:  # Reset the game state if it was over
@@ -286,22 +335,265 @@ async def start(ctx):
             game.score = 0
             game.board = [[None for _ in range(COLUMN_COUNT)] for _ in range(ROW_COUNT)]
             game.tetrimino = game.new_tetrimino()
-        await ctx.send("The game has started! Use commands to play!")
+        await ctx.send("The game has started! Use commands to play! !right will make it go right. !left will make it go left. !rotate will make the block rotate.")
+        first_run = False  # After the first run, don't need !start anymore
+
 
 @bot.command()
-async def left(ctx):
-    if not game.game_over:
-        game.move_tetrimino_left()
+async def r(ctx):
+    if game_started and not game.game_over:
+        # Always move the tetrimino right once, regardless of the number provided
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def R(ctx):
+    if game_started and not game.game_over:
+        # Always move the tetrimino right once, regardless of the number provided
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
 
 @bot.command()
 async def right(ctx):
-    if not game.game_over:
+    if game_started and not game.game_over:
         game.move_tetrimino_right()
+        await ctx.send("Moved right!")
 
 @bot.command()
-async def rotate(ctx):
-    if not game.game_over:
+async def Right(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def RIght(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def RIGht(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def riGht(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def riGHT(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def rIGHT(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def RIGhT(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_right()
+        await ctx.send("Moved right!")
+
+@bot.command()
+async def l(ctx):
+    if game_started and not game.game_over:
+        # Always move the tetrimino left once, regardless of the number provided
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def L(ctx):
+    if game_started and not game.game_over:
+        # Always move the tetrimino left once, regardless of the number provided
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def left(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def Left(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def LEft(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def LEFt(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def leFt(ctx): 
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def leFT(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def lEft(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def lEFt(ctx):
+    if game_started and not game.game_over:
+        game.move_tetrimino_left()
+        await ctx.send("Moved left!")
+
+@bot.command()
+async def rt(ctx):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
         game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def RT(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def Rt(ctx):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def rT(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def rotate(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def ROtate(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+
+
+@bot.command()
+async def rOtate(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def rOtaTe(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+
+@bot.command()
+async def RoTATE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def rOtaTE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def RoTaTe(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def rOTATE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def RoTATe(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+
+@bot.command()
+async def ROTATe(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def ROTAte(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def roTATE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")        
+
+@bot.command()
+async def ROTATE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+@bot.command()
+async def ROtATE(ctx, *args):
+    if game_started and not game.game_over:
+        # Always rotate the tetrimino once, regardless of the number provided
+        game.rotate_tetrimino()
+        await ctx.send("Rotated!")
+
+#Command madness ends here
 
 @bot.command()
 async def tryagain(ctx):
